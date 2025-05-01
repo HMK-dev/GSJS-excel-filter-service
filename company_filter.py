@@ -252,8 +252,10 @@ def extract_excellent_companies(df_excellent, df_pension):
         company_name = normalize_company_name(row[excellent_company_col])
         bizno = str(row[excellent_bizno_col]).replace("-","").zfill(10)
         key = (company_name, bizno[:6])
-        excellent_companies[key] = idx
-
+        excellent_companies[key] = {
+            "index": idx,
+            "full_bizno": bizno
+        }
 
     # 국민연금 데이터의 회사명 컬럼 확인
     company_name_col = df_pension.columns[1]
@@ -275,7 +277,13 @@ def extract_excellent_companies(df_excellent, df_pension):
 
         # 정규화된 회사명으로 비교 및 사업자등록번호 비교
         if key in excellent_companies:
+            matched_info = excellent_companies[key]
+
+            # 사업자등록번호 덮어쓰기
+            df_pension.at[idx, pension_bizno_col] = matched_info["full_bizno"]
+
             filtered_rows.append(row)
+
 
     df_filtered = pd.DataFrame(filtered_rows)
     print(f"✅ 필터링 완료: 총 {len(df_filtered)}개의 강소기업이 발견되었습니다.")
