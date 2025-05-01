@@ -6,6 +6,38 @@ import random
 import re
 
 
+def extract_province_abbreviation(address):
+    """
+    전체 주소에서 도/시 이름을 축약형으로 변환합니다.
+    예: '경기도' → '경기', '서울특별시' → '서울'
+    """
+    province_map = {
+        '서울특별시': '서울', '서울시': '서울', '서울': '서울',
+        '경기도': '경기', '경기': '경기',
+        '인천광역시': '인천', '인천': '인천',
+        '부산광역시': '부산', '부산': '부산',
+        '대구광역시': '대구', '대구': '대구',
+        '광주광역시': '광주', '광주': '광주',
+        '대전광역시': '대전', '대전': '대전',
+        '울산광역시': '울산', '울산': '울산',
+        '세종특별자치시': '세종', '세종': '세종',
+        '강원도': '강원', '강원': '강원',
+        '충청북도': '충북', '충북': '충북',
+        '충청남도': '충남', '충남': '충남',
+        '전라북도': '전북', '전북': '전북',
+        '전라남도': '전남', '전남': '전남',
+        '경상북도': '경북', '경북': '경북',
+        '경상남도': '경남', '경남': '경남',
+        '제주특별자치도': '제주', '제주': '제주'
+    }
+
+    if not isinstance(address, str):
+        return ""
+    for full_name, short in province_map.items():
+        if address.startswith(full_name):
+            return short
+    return ""
+
 # 회사명을 정규화하는 함수
 def normalize_company_name(name):
     """
@@ -62,7 +94,9 @@ def detect_columns(df):
 
 # 지역명 추출 함수
 def extract_region(address):
-    return address.split()[0]
+    if isinstance(address, str) and address.strip():
+        address.split()[0]
+    return ""
 
 # 영역전개
 def gojo_domain_expansion():
@@ -227,10 +261,6 @@ def extract_excellent_companies(df_excellent, df_pension):
         print("❌ 국민연금 데이터에서 회사명/사업장명 컬럼을 찾을 수 없습니다.")
         return pd.DataFrame()
 
-    if not company_name_col:
-        print("❌ 국민연금 데이터에서 회사명/사업장명 컬럼을 찾을 수 없습니다.")
-        return pd.DataFrame()
-
     # 진행 상황을 표시하면서 필터링
     filtered_rows = []
     total_rows = len(df_pension)
@@ -272,6 +302,7 @@ def update_company_location(df_excellent, df_pension):
     address_col = df_pension.columns[5]
     pension_bizno_col = df_pension.columns[2]  # 국민연금 사업자 등록번호 컬럼
 
+
     if not company_name_col:
         print("❌ 국민연금 데이터에서 회사명/사업장명 컬럼을 찾을 수 없습니다.")
         return df_excellent
@@ -287,11 +318,16 @@ def update_company_location(df_excellent, df_pension):
     print("회사명 매핑을 생성합니다.")
     company_mapping = {}
     for idx, row in df_pension.iterrows():
+
         pension_bizno = str(row[pension_bizno_col]).replace("-", "")
+        address = str(row[address_col]).replace("-", "")
 
         if not pension_bizno:
             print(f"❌ {row[company_name_col]} 사업자 등록번호가 누락되었습니다.")
             continue  # 사업자등록번호가 없는 경우 건너뛰기
+        if not address:
+            print(f"❌ {row[company_name_col]} 주소가 누락되었습니다.")
+            continue  # 주소가 없는 경우 건너뛰기
 
         if company_name_col in row and row[company_name_col]:
             normalized_name = normalize_company_name(row[company_name_col])
@@ -300,9 +336,6 @@ def update_company_location(df_excellent, df_pension):
 
             # 주소 정보 저장
             company_info = {}
-
-            if address_col and address_col in row and row[address_col]:
-                company_info['region'] = extract_region(row[address_col])
 
             if zip_code_col and zip_code_col in row and row[zip_code_col]:
                 company_info['zip_code'] = row[zip_code_col]
@@ -330,8 +363,7 @@ def update_company_location(df_excellent, df_pension):
         if mapping_key in company_mapping:
             company_info = company_mapping[mapping_key]
             # 지역 컬럼 업데이트
-            if 'region' in company_info:
-                df_excellent.at[idx, '지역'] = company_info['region']
+            df_excellent.at[idx, '지역'] = extract_province_abbreviation(str(row['소재지']))
 
             # 우편번호 업데이트
             if 'zip_code' in company_info:
