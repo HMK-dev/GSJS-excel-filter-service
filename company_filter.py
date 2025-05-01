@@ -115,7 +115,7 @@ def gojo_domain_expansion():
 
         """
      * * * * * * * 
-     *  무한공간  *
+     *  무량공처  *
      * * * * * * *
 
         """,
@@ -123,10 +123,10 @@ def gojo_domain_expansion():
 
     final_text = """
     ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    ★                                                  ★
-    ★             무 한 영 역 전 개                     ★
-    ★              INFINITE VOID                       ★
-    ★                                                  ★
+    ★                                                                           ★
+    ★                             무 한 영 역 전 개                               ★
+    ★                             료 이 키 텐 카 이                               ★
+    ★                                                                           ★
     ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
     """
 
@@ -240,7 +240,7 @@ def extract_excellent_companies(df_excellent, df_pension):
             update_progress(i + 1, total_rows, '필터링 중')
 
         pension_company = normalize_company_name(row[company_name_col])
-        pension_bizno = str(row[pension_bizno_col]).replace("-", "").zfill(10)
+        pension_bizno = str(row[pension_bizno_col]).replace("-", "")
         key = (pension_company, pension_bizno[:6])
 
         # 정규화된 회사명으로 비교 및 사업자등록번호 비교
@@ -263,22 +263,18 @@ def update_company_location(df_excellent, df_pension):
 
     gojo_domain_expansion()
 
-    # 컬럼 자동 감지
-    excellent_cols = detect_columns(df_excellent)
-    pension_cols = detect_columns(df_pension)
-
     excellent_company_col = "사업자명"
+    excellent_bizno_col = "사업자등록번호"
 
     # 국민연금 데이터의 필요한 컬럼 확인
+    zip_code_col = df_pension.columns[4]
     company_name_col = df_pension.columns[1]
     address_col = df_pension.columns[5]
-    zip_code_col = df_pension.columns[4]
-
+    pension_bizno_col = df_pension.columns[2]  # 국민연금 사업자 등록번호 컬럼
 
     if not company_name_col:
         print("❌ 국민연금 데이터에서 회사명/사업장명 컬럼을 찾을 수 없습니다.")
         return df_excellent
-
 
     # 새 컬럼 추가
     if '지역' not in df_excellent.columns:
@@ -286,11 +282,21 @@ def update_company_location(df_excellent, df_pension):
     if '우편번호' not in df_excellent.columns:
         df_excellent['우편번호'] = ""
 
+
     # 회사명 매핑 생성 (정규화된 이름 기준)
+    print("회사명 매핑을 생성합니다.")
     company_mapping = {}
     for idx, row in df_pension.iterrows():
+        pension_bizno = str(row[pension_bizno_col]).replace("-", "")
+
+        if not pension_bizno:
+            print(f"❌ {row[company_name_col]} 사업자 등록번호가 누락되었습니다.")
+            continue  # 사업자등록번호가 없는 경우 건너뛰기
+
         if company_name_col in row and row[company_name_col]:
             normalized_name = normalize_company_name(row[company_name_col])
+
+            mapping_key = (normalized_name, pension_bizno)
 
             # 주소 정보 저장
             company_info = {}
@@ -301,8 +307,9 @@ def update_company_location(df_excellent, df_pension):
             if zip_code_col and zip_code_col in row and row[zip_code_col]:
                 company_info['zip_code'] = row[zip_code_col]
 
-            company_mapping[normalized_name] = company_info
+            company_mapping[mapping_key] = company_info
 
+    print("------------")
     # 진행 상황을 표시하면서 업데이트
     total_rows = len(df_excellent)
     updated_count = 0
@@ -311,11 +318,17 @@ def update_company_location(df_excellent, df_pension):
         if i % 10 == 0 or i == total_rows - 1:  # 10개 단위로 업데이트
             update_progress(i + 1, total_rows, '데이터 업데이트 중')
 
-        company_name = row[excellent_company_col]
-        normalized_name = normalize_company_name(company_name)
+        company_name = normalize_company_name(row[excellent_company_col])
+        excellent_bizno = str(row[excellent_bizno_col]).replace("-", "")
+        mapping_key = (company_name, excellent_bizno[:6])
 
-        if normalized_name in company_mapping:
-            company_info = company_mapping[normalized_name]
+        # df_pension에 해당 회사명이 있는지 확인하고, 없으면 건너뛴다.
+        if mapping_key not in company_mapping:
+            continue  # 해당 회사명이 없으면 건너뛰기
+
+
+        if mapping_key in company_mapping:
+            company_info = company_mapping[mapping_key]
             # 지역 컬럼 업데이트
             if 'region' in company_info:
                 df_excellent.at[idx, '지역'] = company_info['region']
@@ -332,8 +345,8 @@ def update_company_location(df_excellent, df_pension):
 
 # 옵션 1: 국민연금 데이터에서 강소기업만 추출
 def run_filter_companies():
-    print("📄 강소기업 엑셀 파일명을 입력하세요 (예: 강소기업_명단.xlsx):")
-    company_file = input().strip()
+    print("📄 강소기업 엑셀 파일명을 입력하세요 (예: 강소기업_명단):")
+    company_file = input().strip() + ".xlsx"
 
     try:
         print(f"📝 강소기업 데이터를 불러오는 중...")
@@ -344,19 +357,17 @@ def run_filter_companies():
         mode = input().strip()
 
         if mode == "1":
-            print("📄 처리할 국민연금 csv 파일명을 입력하세요 (예: pension_202401.csv):")
-            pension_file = input().strip()
+            print("📄 처리할 국민연금 csv 파일명을 입력하세요 (예: pension_202401):")
+            pension_file = input().strip() + ".csv"
 
-            # 영역전개 실행
-            gojo_domain_expansion()
             print(f"📝 국민연금 데이터를 불러오는 중...")
             df_pension = load_pension_data(pension_file)
             print(f"✅ 국민연금 데이터 불러오기 완료: {len(df_pension)}개 항목")
 
             df_filtered = extract_excellent_companies(df_excellent, df_pension)
 
-            print("💾 저장할 파일명을 입력하세요 (예: filtered_202401.xlsx):")
-            output_file = input().strip()
+            print("💾 저장할 파일명을 입력하세요 (예: filtered_202401):")
+            output_file = input().strip() + ".xlsx"
 
 
             print(f"💾 결과를 저장하는 중...")
@@ -390,19 +401,17 @@ def run_filter_companies():
 
 # 옵션 2: 소재지를 강소기업 파일로 덮어쓰기
 def run_update_location():
-    print("📄 강소기업 엑셀 파일명을 입력하세요 (예: 강소기업_명단.xlsx):")
-    company_file = input().strip()
+    print("📄 강소기업 엑셀 파일명을 입력하세요 (예: 강소기업_명단):")
+    company_file = input().strip() + ".xlsx"
 
     try:
-        # 영역전개 실행
-        gojo_domain_expansion()
         print(f"📝 강소기업 데이터를 불러오는 중...")
 
         df_excellent = load_company_data(company_file)
         print(f"✅ 강소기업 데이터 불러오기 완료: {len(df_excellent)}개 기업")
 
-        print("📄 국민연금 엑셀 파일명을 입력하세요 (예: 국민연금_202401.xlsx):")
-        pension_file = input().strip()
+        print("📄 국민연금 csv 파일명을 입력하세요 (예: 국민연금_202401):")
+        pension_file = input().strip() + ".csv"
 
         print(f"📝 국민연금 데이터를 불러오는 중...")
         df_pension = load_pension_data(pension_file)
@@ -410,8 +419,8 @@ def run_update_location():
 
         updated_df = update_company_location(df_excellent, df_pension)
 
-        print("💾 저장할 파일명을 입력하세요 (예: updated_location.xlsx):")
-        output_file = input().strip()
+        print("💾 저장할 파일명을 입력하세요 (예: updated_location):")
+        output_file = input().strip() + ".xlsx"
 
         print(f"💾 결과를 저장하는 중...")
         updated_df.to_excel(os.path.join(OUTPUT_DIR, output_file), index=False)
