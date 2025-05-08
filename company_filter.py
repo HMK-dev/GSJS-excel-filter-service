@@ -4,7 +4,7 @@ import sys
 import time
 import random
 import re
-
+import difflib
 
 def extract_province_abbreviation(address):
     """
@@ -230,7 +230,6 @@ def load_pension_data(file_name):
     df = pd.read_csv(pension_file_path, dtype=str, encoding="CP949")
     return df
 
-
 # 강소기업만 추출하는 함수
 def extract_excellent_companies(df_excellent, df_pension):
     print(f"🔍 총 {len(df_pension)}개의 국민연금 데이터 중에서 강소기업 {len(df_excellent)}개를 검색합니다...")
@@ -285,6 +284,141 @@ def extract_excellent_companies(df_excellent, df_pension):
 
     return df_filtered
 
+
+# 강소기업만 추출하는 함수
+def extract_excellent_companies_updated(df_excellent, df_pension):
+    print(f"🔍 총 {len(df_pension)}개의 국민연금 데이터 중에서 강소기업 {len(df_excellent)}개를 검색합니다...")
+
+    excellent_company_col = "사업자명"
+    excellent_bizno_col = "사업자등록번호"
+    excellent_address_col = "소재지"  # 강소기업 주소 컬럼명
+
+    pension_bizno_col = df_pension.columns[2]  # 국민연금 사업자 등록번호 컬럼
+
+    # 국민연금 데이터의 회사명 컬럼 확인
+    company_name_col = df_pension.columns[1]
+    if not company_name_col:
+        print("❌ 국민연금 데이터에서 회사명/사업장명 컬럼을 찾을 수 없습니다.")
+        return pd.DataFrame()
+
+    # 국민연금 데이터의 주소 컬럼 (일반적으로 3번 컬럼)
+    pension_address_col = df_pension.columns[3]  # 국민연금 주소 컬럼
+
+    # 회사명 정규화 및 매핑 딕셔너리 생성
+    # 회사명 + 사업자등록번호를 기준으로 매핑 딕셔너리 생성
+    excellent_companies = {}
+    for idx, row in df_excellent.iterrows():
+        company_name = normalize_company_name(row[excellent_company_col])
+        bizno = str(row[excellent_bizno_col]).replace("-", "").zfill(10)
+        key = (company_name, bizno[:6])
+        excellent_companies[key] = {
+            "index": idx,
+            "full_bizno": bizno,
+            "address": row[excellent_address_col]  # 강소기업 주소 저장
+        }
+
+    # 진행 상황을 표시하면서 필터링
+    filtered_rows = []
+    total_rows = len(df_pension)
+
+    # 주소 중복 처리를 위한 딕셔너리 생성
+    # 각 key(회사명+사업자번호)에 대한 최적의 행을 저장
+    # key: (회사명, 사업자번호 앞6자리), value: (행 데이터, 유사도 점수)
+    # 추가된 부분: 중복된 key 처리를 위한 딕셔너리
+    best_matches = {}
+
+    for i, (idx, row) in enumerate(df_pension.iterrows()):
+        if i % 100 == 0 or i == total_rows - 1:  # 100개 단위로 업데이트
+            update_progress(i + 1, total_rows, '필터링 중')
+
+        pension_company = normalize_company_name(row[company_name_col])
+        pension_bizno = str(row[pension_bizno_col]).replace("-", "")
+        key = (pension_company, pension_bizno[:6])
+
+        # 정규화된 회사명으로 비교 및 사업자등록번호 비교
+        if key in excellent_companies:
+            matched_info = excellent_companies[key]
+
+            # 추가된 부분: 주소 유사도 계산
+            pension_address = str(row[pension_address_col])
+            excellent_address = str(matched_info["address"])
+            similarity_score = calculate_address_similarity(pension_address, excellent_address)
+
+            # 사업자등록번호 덮어쓰기
+            df_pension.at[idx, pension_bizno_col] = matched_info["full_bizno"]
+
+            # 추가된 부분: 중복 처리 - 더 높은 유사도를 가진 행 선택
+            if key in best_matches:
+                if similarity_score > best_matches[key][1]:
+                    # 유사도가 더 높은 경우 교체
+                    best_matches[key] = (row, similarity_score)
+            else:
+                # 첫 등록
+                best_matches[key] = (row, similarity_score)
+
+    # 추가된 부분: 중복 제거된 최종 필터링 결과 생성
+    filtered_rows = [match[0] for match in best_matches.values()]
+
+    df_filtered = pd.DataFrame(filtered_rows)
+    print(f"✅ 필터링 완료: 총 {len(df_filtered)}개의 강소기업이 발견되었습니다.")
+
+    return df_filtered
+
+
+# 추가된 부분: 주소 유사도 계산 함수
+def calculate_address_similarity(address1, address2):
+    """
+    두 주소 간의 유사도를 계산하는 함수
+
+    주소 전처리 후 토큰 기반 유사도를 계산
+    예: "경기 광주시 왕림로 161"와 "경기도 광주시 오포읍 왕림로"의 유사도 계산
+
+    Parameters:
+    address1 (str): 첫 번째 주소
+    address2 (str): 두 번째 주소
+
+    Returns:
+    float: 두 주소 간의 유사도 점수 (0.0 ~ 1.0)
+    """
+    # 주소 전처리: 공백 제거, 소문자 변환
+    address1 = address1.strip().lower()
+    address2 = address2.strip().lower()
+
+    # 주소에서 불필요한 단어/문자 제거
+    patterns_to_remove = ['(주)', '(유)', '(합)', '주식회사', '유한회사', ',', '(', ')', '.']
+    for pattern in patterns_to_remove:
+        address1 = address1.replace(pattern, '')
+        address2 = address2.replace(pattern, '')
+
+    # 시도 이름 표준화 (예: '경기' -> '경기도')
+    sido_mapping = {
+        '경기': '경기도', '서울': '서울특별시', '부산': '부산광역시',
+        '대구': '대구광역시', '인천': '인천광역시', '광주': '광주광역시',
+        '대전': '대전광역시', '울산': '울산광역시', '세종': '세종특별자치시',
+        '강원': '강원도', '충북': '충청북도', '충남': '충청남도',
+        '전북': '전라북도', '전남': '전라남도', '경북': '경상북도',
+        '경남': '경상남도', '제주': '제주특별자치도'
+    }
+
+    for short, full in sido_mapping.items():
+        if address1.startswith(short) and not address1.startswith(full):
+            address1 = address1.replace(short, full, 1)
+        if address2.startswith(short) and not address2.startswith(full):
+            address2 = address2.replace(short, full, 1)
+
+    # 토큰화 (공백 기준)
+    tokens1 = set(address1.split())
+    tokens2 = set(address2.split())
+
+    # 자카드 유사도 계산 (교집합 / 합집합)
+    intersection = len(tokens1.intersection(tokens2))
+    union = len(tokens1.union(tokens2))
+
+    if union == 0:  # 방어 코드
+        return 0.0
+
+    similarity = intersection / union
+    return similarity
 
 def update_company_location(df_excellent, df_pension):
     """
@@ -408,7 +542,7 @@ def run_filter_companies():
             df_pension = load_pension_data(pension_file)
             print(f"✅ 국민연금 데이터 불러오기 완료: {len(df_pension)}개 항목")
 
-            df_filtered = extract_excellent_companies(df_excellent, df_pension)
+            df_filtered = extract_excellent_companies_updated(df_excellent, df_pension)
 
             print("💾 저장할 파일명을 입력하세요 (예: filtered_202401):")
             output_file = input().strip() + ".xlsx"
